@@ -1,0 +1,114 @@
+#!/usr/bin/env ruby
+
+require 'pathname'
+require 'optparse'
+require 'fileutils'
+
+class PastryRunner
+  attr_reader :app, :env, :host, :port, :workers
+
+  def initialize options = {}
+    @app     = options.fetch :name,    'pastry'
+    @env     = options.fetch :env,     'development'
+    @port    = options.fetch :port,    3000
+    @host    = options.fetch :host,    '127.0.0.1'
+    @workers = options.fetch :workers, 5
+  end
+
+  def root
+    Pathname.new(__FILE__).dirname + '..'
+  end
+
+  def development?
+    env == 'development'
+  end
+
+  def pidfile
+    File.join(root, 'tmp', 'pids', "#{app}.pid")
+  end
+
+  def logfile
+    File.join(root, 'log', "#{app}.log")
+  end
+
+  def pid
+    File.read(pidfile).to_i
+  end
+
+  def running?
+    File.exists?(pidfile) && alive?(pid)
+  end
+
+  def alive? pid
+    Process.kill(0, pid) rescue nil
+  end
+
+  def restart
+    if running?
+      Process.kill('HUP', pid)
+    else
+      start
+    end
+  end
+
+  def absolute_path *fragments
+    File.absolute_path(File.join(root, *fragments))
+  end
+
+  def start
+    raise "already running with #{pid}" if running?
+    setup!
+
+    cli =  []
+    cli << './bin/pastry'
+    cli << "-A #{app}"
+    cli << "-P #{pidfile}"
+    cli << "-R #{absolute_path('config.ru')}"
+    cli << "-E #{env}"
+    cli << "-p #{port}"
+    cli << "-a #{host}"
+    cli << "-n #{workers}"
+
+    unless development?
+      cli << "-l #{logfile}"
+      cli << '-d'
+    end
+
+    if File.exists? absolute_path('pastry.cfg')
+      cli << absolute_path('pastry.cfg')
+    end
+
+    puts "running: #{cli.join(' ')}"
+    Kernel.exec cli.join(' ')
+  end
+
+  def setup!
+    FileUtils.mkpath(File.dirname(pidfile))
+    FileUtils.mkpath(File.dirname(logfile))
+  end
+
+  def stop
+    return unless running?
+    Process.kill('TERM', pid)
+  end
+end # PastryRunner
+
+options = {}
+OptionParser.new do |opt|
+  opt.on('-A application', '--application name', 'String')  {|name| options[:name]    = name}
+  opt.on('-E environment', '--environment name', 'String')  {|name| options[:env]     = name}
+  opt.on('-p port'       , '--port        port', 'Integer') {|port| options[:port]    = port}
+  opt.on('-a host'       , '--host        host', 'String')  {|host| options[:host]    = host}
+  opt.on('-n workers'    , '--workers     size', 'Integer') {|size| options[:workers] = size}
+end.parse!
+
+runner  = PastryRunner.new(options)
+command = ARGV.shift || 'start'
+
+case command
+  when 'start'   then runner.start
+  when 'stop'    then runner.stop
+  when 'restart' then runner.restart
+  else
+    puts "Invalid command #{command}, expecting start, stop or restart"
+end
