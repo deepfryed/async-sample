@@ -13,3 +13,7 @@ bundle --path gems --binstubs
 ```
 ./script/sever
 ```
+
+## License
+
+BSD
